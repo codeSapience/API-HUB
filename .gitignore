@@ -24,6 +24,7 @@
 **/.serverless
 **/.webpack
 **/.parcel-cache
+**/src/naija_api_hub.egg-info/
 
 # Ignore all files in the public directory except for index.html
 /public/*
