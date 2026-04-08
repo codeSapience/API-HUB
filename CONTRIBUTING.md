@@ -7,7 +7,6 @@ First off, thank you for considering contributing to API Hub. This project aims 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
-- [Project Structure](#project-structure)
 - [Commit Guidelines](#commit-guidelines)
 - [Branch Naming Convention](#branch-naming-convention)
 - [Pull Request Process](#pull-request-process)
@@ -51,7 +50,7 @@ Project maintainers have the right to remove, edit, or reject comments, commits,
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Python | 3.11+ | Backend |
-| Node.js | 20+ | Frontend |
+| Node.js | 20+ | Frontend (future) |
 | Docker | 24+ | Local infrastructure |
 | Docker Compose | 2.20+ | Local services |
 | Git | 2.40+ | Version control |
@@ -60,24 +59,28 @@ Project maintainers have the right to remove, edit, or reject comments, commits,
 ### First Time Setup
 
 ```bash
-# 1. Fork the repository on GitHub
+# 1. Fork the repository on GitHub, then clone your fork
+git clone https://github.com/YOUR_USERNAME/API-HUB.git
+cd API-HUB
 
-# 2. Clone your fork
-git clone https://github.com/your-username/naija-api-hub.git
-cd naija-api-hub
+# 2. Add the main repository as an upstream remote
+git remote add upstream https://github.com/Aldorax/API-HUB.git
 
-# 3. Add upstream remote
-git remote add upstream https://github.com/naija-api-hub/naija-api-hub.git
+# Note: To sync your fork with the latest updates from upstream, run:
+# git pull upstream main
 
-# 4. Install dependencies and setup environment
-make dev-install
+# 3. Navigate to the backend directory
+cd apps/backend
 
-# 5. Copy environment variables
+# 4. Copy environment variables
 cp .env.example .env
 # Edit .env with your values (at minimum, change JWT_SECRET_KEY)
 
-# 6. Start local infrastructure
-make docker-up
+# 5. Install dependencies and setup virtual environment
+make dev-install
+
+# 6. Start local infrastructure (PostgreSQL & Redis)
+make dc-up
 
 # 7. Run database migrations
 make migrate
@@ -86,7 +89,8 @@ make migrate
 make dev
 ```
 
-Your local instance will be available at `http://localhost:8000`
+Your local instance will be available at `http://localhost:8000`  
+Interactive API docs: `http://localhost:8000/docs`
 
 ---
 
@@ -105,8 +109,8 @@ Your local instance will be available at `http://localhost:8000`
 | `make check` | Run all code quality checks |
 | `make migrate` | Run database migrations |
 | `make migrate-new msg="..."` | Create new migration |
-| `make docker-up` | Start Postgres and Redis |
-| `make docker-down` | Stop containers |
+| `make dc-up` | Start Postgres and Redis containers |
+| `make dc-down` | Stop containers |
 | `make clean` | Clean virtual environment and cache |
 
 ### Running Individual Components
@@ -128,6 +132,7 @@ make worker
 make beat
 ```
 
+---
 
 ## Commit Guidelines
 
@@ -232,9 +237,6 @@ pip install commitizen
 
 # Then use
 cz commit
-
-# Or use the Makefile
-make commit
 ```
 
 ---
@@ -252,20 +254,15 @@ make commit
 
 ### Branch Lifecycle
 
-1. Create branch from `main` or `develop`
-2. Make commits following commit conventions
-3. Push branch and open Pull Request
-4. After merge, delete branch
-
 ```bash
-# Create feature branch
+# Create feature branch from main
 git checkout main
-git pull upstream main
+git pull origin main
 git checkout -b feature/42-magic-link-auth
 
-# After PR is merged
+# After PR is merged, delete branch
 git checkout main
-git pull upstream main
+git pull origin main
 git branch -d feature/42-magic-link-auth
 ```
 
@@ -288,13 +285,10 @@ Same as commit format: `<type>(<scope>): <description>`
 
 Example: `feat(auth): add magic link authentication`
 
----
+### PR Description Template
 
-
-## PR Description Template
-
-
-### Description
+```markdown
+## Description
 
 <!-- Provide a clear description of what this PR does -->
 
@@ -337,6 +331,8 @@ Closes #123
 ## Additional Context
 
 <!-- Any other information that would help reviewers -->
+```
+
 ### PR Review Process
 
 1. **Submit PR** – Fill out template, request reviewers
@@ -368,6 +364,37 @@ Closes #123
 | Ruff | Linting | `make lint` |
 | MyPy | Type checking | `make type-check` |
 
+### Python Style Guide
+
+```python
+# Imports order
+# 1. Standard library
+import json
+from typing import Optional
+
+# 2. Third-party
+from fastapi import FastAPI, HTTPException
+from sqlalchemy import Column, Integer, String
+
+# 3. Local
+from src.models import User
+from src.services import auth_service
+
+# Type hints required
+async def get_user(user_id: int, db: AsyncSession) -> Optional[User]:
+    """Get user by ID.
+
+    Args:
+        user_id: The user's ID
+        db: Database session
+
+    Returns:
+        User object if found, None otherwise
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalar_one_or_none()
+```
+
 ### Naming Conventions
 
 | Type | Convention | Example |
@@ -376,14 +403,31 @@ Closes #123
 | Python classes | PascalCase | `UserModel` |
 | Python functions | snake_case | `get_user_by_email` |
 | Python constants | UPPER_SNAKE_CASE | `MAX_RETRY_COUNT` |
-| TypeScript files | kebab-case | `api-card.tsx` |
-| TypeScript components | PascalCase | `ApiCard` |
-| TypeScript hooks | camelCase with 'use' | `useAuth` |
 | Environment variables | UPPER_SNAKE_CASE | `DATABASE_URL` |
 
 ---
 
 ## Testing Guidelines
+
+### Writing Tests
+
+```python
+# tests/test_auth.py
+import pytest
+from httpx import AsyncClient
+from src.main import app
+
+@pytest.mark.asyncio
+async def test_magic_link_request():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/auth/magic-link",
+            json={"email": "test@example.com"}
+        )
+        assert response.status_code == 200
+        assert response.json()["message"] == "Magic link sent"
+```
+
 ### Running Tests
 
 ```bash
@@ -423,7 +467,6 @@ pytest tests/ -v -m "not slow"
 | `README.md` | Project overview, quick start |
 | `CONTRIBUTING.md` | Contribution guidelines (this file) |
 | `docs/architecture.md` | System architecture |
-| `docs/api/` | API documentation (OpenAPI) |
 | Docstrings | Functions, classes, modules |
 | Inline comments | Complex logic, edge cases |
 
@@ -465,7 +508,7 @@ def calculate_commission(amount: float, provider_rate: float) -> float:
 
 ### Bug Report Template
 
-
+```markdown
 ## Description
 <!-- Clear description of the bug -->
 
@@ -485,14 +528,14 @@ def calculate_commission(amount: float, provider_rate: float) -> float:
 - OS: [e.g., Ubuntu 22.04]
 - Python Version: [e.g., 3.11]
 - FastAPI Version: [e.g., 0.115.0]
-- Browser (if frontend): [e.g., Chrome 120]
 
 ## Additional Context
 <!-- Screenshots, logs, etc. -->
+```
 
 ### Feature Request Template
 
-
+```markdown
 ## Problem Statement
 <!-- What problem does this feature solve? -->
 
@@ -507,6 +550,7 @@ def calculate_commission(amount: float, provider_rate: float) -> float:
 
 ## Additional Context
 <!-- Any other information -->
+```
 
 ---
 
@@ -523,7 +567,7 @@ def calculate_commission(amount: float, provider_rate: float) -> float:
 
 ### Review Comments Format
 
-
+```markdown
 # Suggestion (non-blocking)
 **Suggestion:** Consider using a more descriptive variable name here.
 
@@ -535,6 +579,7 @@ def calculate_commission(amount: float, provider_rate: float) -> float:
 
 # Praise
 **Nice:** Great test coverage on this function!
+```
 
 ### Approval Criteria
 
@@ -559,14 +604,13 @@ We follow [Semantic Versioning](https://semver.org/):
 
 ### Release Checklist
 
-
+```markdown
 ## Release vX.Y.Z Checklist
 
 - [ ] All tests pass
 - [ ] Documentation updated
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped in pyproject.toml
-- [ ] Version bumped in package.json (frontend)
 - [ ] Release branch created
 - [ ] PR merged to main
 - [ ] Tag created: git tag vX.Y.Z
@@ -574,6 +618,7 @@ We follow [Semantic Versioning](https://semver.org/):
 - [ ] Deployed to staging
 - [ ] Smoke tests pass
 - [ ] Deployed to production
+```
 
 ### Creating a Release
 
@@ -594,9 +639,10 @@ git push origin release/v1.0.0
 
 # 6. After PR merges, tag the release
 git checkout main
-git pull upstream main
+git pull origin main
 git tag -a v1.0.0 -m "Release v1.0.0"
-git push upstream v1.0.0
+git push origin v1.0.0
+```
 
 ---
 
@@ -608,8 +654,7 @@ git push upstream v1.0.0
 |---------|---------|
 | GitHub Issues | Bug reports, feature requests |
 | GitHub Discussions | Questions, ideas, general discussion |
-| Slack (invite only) | Real-time collaboration |
-| Email | `contributors@naijaapihub.com` |
+| Email | `support@naijaapihub.com` |
 
 ### Before Asking for Help
 
@@ -620,7 +665,7 @@ git push upstream v1.0.0
 
 ### How to Ask
 
-
+```markdown
 **What are you trying to do?**
 [Clear description]
 
@@ -653,3 +698,6 @@ By contributing to API Hub, you agree that your contributions will be licensed u
 ---
 
 **Thank you for contributing to API Hub! 🚀**
+```
+
+This updated version uses your correct repo URL, project name, and directory structure. You can now copy this into your `CONTRIBUTING.md` file.
