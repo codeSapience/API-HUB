@@ -18,8 +18,9 @@ PYTEST := $(VENV)/bin/pytest
 ALEMBIC := $(VENV)/bin/alembic
 CELERY := $(VENV)/bin/celery
 
-# Docker (for local Postgres + Redis)
+# Docker Compose (for local Postgres + Redis)
 DOCKER_COMPOSE := docker-compose
+COMPOSE_FILE := docker-compose.yml
 
 # App settings
 APP_MODULE := src.main:app
@@ -35,14 +36,16 @@ help:
 	@echo "===================================="
 	@echo ""
 	@echo "Setup & Installation:"
-	@echo "  make install      - Create virtual environment and install dependencies"
+	@echo "  make install      - Create virtual environment (if missing) and install dependencies"
 	@echo "  make dev-install  - Install with dev dependencies"
 	@echo "  make clean        - Remove virtual environment and cache files"
 	@echo ""
 	@echo "Development:"
 	@echo "  make dev          - Run FastAPI dev server (with auto-reload)"
-	@echo "  make docker-up    - Start Postgres and Redis containers"
-	@echo "  make docker-down  - Stop containers"
+	@echo "  make dc-up        - Start Postgres and Redis containers (detached)"
+	@echo "  make dc-down      - Stop containers"
+	@echo "  make dc-ps        - Show container status"
+	@echo "  make dc-logs      - View container logs"
 	@echo "  make migrate      - Run database migrations"
 	@echo "  make migrate-new  - Create new migration (msg=description)"
 	@echo "  make shell        - Open Python shell with app context"
@@ -65,23 +68,27 @@ help:
 	@echo "Database:"
 	@echo "  make db-reset     - Reset database (drop all tables, remigrate)"
 	@echo "  make db-seed      - Seed database with test data"
+	@echo "  make psql         - Connect to Postgres container"
+	@echo "  make redis-cli    - Connect to Redis container"
 	@echo ""
 	@echo "Production:"
 	@echo "  make prod         - Run production server (no auto-reload)"
 	@echo "  make docker-build - Build production Docker image"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make logs         - View Docker logs"
-	@echo "  make psql         - Connect to Postgres database"
-	@echo "  make redis-cli    - Connect to Redis"
+	@echo "  make clean        - Remove virtual environment and cache files"
 
 # ============================================================
 # Setup & Installation
 # ============================================================
 .PHONY: install
 install:
-	@echo "Creating virtual environment..."
-	$(PYTHON) -m venv $(VENV)
+	@if [ -d "$(VENV)" ]; then \
+		echo "Virtual environment already exists at $(VENV)"; \
+	else \
+		echo "Creating virtual environment..."; \
+		$(PYTHON) -m venv $(VENV); \
+	fi
 	@echo "Upgrading pip..."
 	$(PIP) install --upgrade pip
 	@echo "Installing dependencies..."
@@ -97,7 +104,7 @@ dev-install: install
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Copy .env.example to .env and fill in values"
-	@echo "  2. Run 'make docker-up' to start database and Redis"
+	@echo "  2. Run 'make dc-up' to start database and Redis"
 	@echo "  3. Run 'make migrate' to setup database schema"
 	@echo "  4. Run 'make dev' to start the server"
 
@@ -119,50 +126,85 @@ clean:
 # ============================================================
 .PHONY: dev
 dev:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Starting FastAPI development server..."
 	$(UVICORN) $(APP_MODULE) --reload --host $(HOST) --port $(PORT)
 
 .PHONY: prod
 prod:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Starting FastAPI production server..."
 	$(UVICORN) $(APP_MODULE) --host $(HOST) --port $(PORT)
 
 # ============================================================
-# Docker (Local Infrastructure)
+# Docker Compose (Local Infrastructure)
 # ============================================================
-.PHONY: docker-up
-docker-up:
+.PHONY: dc-up
+dc-up:
 	@echo "Starting Postgres and Redis containers..."
-	$(DOCKER_COMPOSE) up -d
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) up -d
 	@echo "Containers started!"
 	@echo "Postgres: localhost:5432"
 	@echo "Redis: localhost:6379"
 
-.PHONY: docker-down
-docker-down:
+.PHONY: dc-down
+dc-down:
 	@echo "Stopping containers..."
-	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) down
 	@echo "Containers stopped"
 
+.PHONY: dc-down-volumes
+dc-down-volumes:
+	@echo "WARNING: This will delete all database and Redis data!"
+	@read -p "Are you sure? (y/N): " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		echo "Stopping containers and removing volumes..."; \
+		$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) down -v; \
+		echo "Containers stopped and volumes removed."; \
+	else \
+		echo "Cancelled."; \
+	fi
+
+.PHONY: dc-ps
+dc-ps:
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) ps
+
+.PHONY: dc-logs
+dc-logs:
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) logs -f
+
+# ============================================================
+# Docker Build (Production Image)
+# ============================================================
 .PHONY: docker-build
 docker-build:
 	@echo "Building production Docker image..."
-	docker build -t naija-api-hub:latest .
-
-.PHONY: logs
-logs:
-	$(DOCKER_COMPOSE) logs -f
+	docker build -t naija-api-hub-backend:latest -f Dockerfile .
 
 # ============================================================
 # Database Migrations
 # ============================================================
 .PHONY: migrate
 migrate:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Running database migrations..."
 	$(ALEMBIC) upgrade head
 
 .PHONY: migrate-new
 migrate-new:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@if [ -z "$(msg)" ]; then \
 		echo "Error: Please provide a migration message. Usage: make migrate-new msg='description'"; \
 		exit 1; \
@@ -172,11 +214,19 @@ migrate-new:
 
 .PHONY: migrate-down
 migrate-down:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Reverting last migration..."
 	$(ALEMBIC) downgrade -1
 
 .PHONY: db-reset
 db-reset:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "WARNING: This will delete all data in the database!"
 	@read -p "Are you sure? (y/N): " confirm; \
 	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
@@ -190,29 +240,41 @@ db-reset:
 
 .PHONY: db-seed
 db-seed:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Seeding database with test data..."
 	$(PYTHON_VENV) -c "from src.seed import seed_database; seed_database()"
 
 .PHONY: psql
 psql:
 	@echo "Connecting to Postgres..."
-	$(DOCKER_COMPOSE) exec postgres psql -U postgres -d naija_api_hub
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) exec postgres psql -U postgres -d naija_api_hub
 
 .PHONY: redis-cli
 redis-cli:
 	@echo "Connecting to Redis..."
-	$(DOCKER_COMPOSE) exec redis redis-cli
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) exec redis redis-cli
 
 # ============================================================
 # Celery Workers
 # ============================================================
 .PHONY: worker
 worker:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Starting Celery worker..."
 	$(CELERY) -A src.tasks.worker worker --loglevel=info
 
 .PHONY: beat
 beat:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Starting Celery beat scheduler..."
 	$(CELERY) -A src.tasks.worker beat --loglevel=info
 
@@ -221,21 +283,37 @@ beat:
 # ============================================================
 .PHONY: format
 format:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Formatting code with Black..."
 	$(BLACK) src/ tests/
 
 .PHONY: lint
 lint:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Linting with Ruff..."
 	$(RUFF) check src/ tests/
 
 .PHONY: lint-fix
 lint-fix:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Linting and auto-fixing with Ruff..."
 	$(RUFF) check src/ tests/ --fix
 
 .PHONY: type-check
 type-check:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Type checking with MyPy..."
 	$(MYPY) src/
 
@@ -245,6 +323,10 @@ check: format lint type-check
 
 .PHONY: pre-commit
 pre-commit:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Running pre-commit hooks..."
 	$(VENV)/bin/pre-commit run --all-files
 
@@ -253,22 +335,38 @@ pre-commit:
 # ============================================================
 .PHONY: test
 test:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Running tests..."
 	$(PYTEST) tests/ -v
 
 .PHONY: test-cov
 test-cov:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Running tests with coverage..."
 	$(PYTEST) tests/ -v --cov=src --cov-report=term-missing --cov-report=html
 	@echo "Coverage report generated at htmlcov/index.html"
 
 .PHONY: test-watch
 test-watch:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Running tests in watch mode..."
 	$(PYTEST) tests/ -v --looponfail
 
 .PHONY: test-integration
 test-integration:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Running integration tests..."
 	$(PYTEST) tests/ -v -m integration
 
@@ -277,6 +375,10 @@ test-integration:
 # ============================================================
 .PHONY: shell
 shell:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
 	@echo "Starting Python shell with app context..."
 	$(PYTHON_VENV) -c "import asyncio; from src.main import app; from src.database import AsyncSessionLocal; from src.config import settings; print('App loaded. Use await for async functions.')" || true
 	$(PYTHON_VENV) -m IPython || $(PYTHON_VENV)
@@ -302,7 +404,7 @@ quickstart:
 	@$(MAKE) dev-install
 	@echo ""
 	@echo "Step 2: Starting Docker containers..."
-	@$(MAKE) docker-up
+	@$(MAKE) dc-up
 	@echo ""
 	@echo "Step 3: Running migrations..."
 	@$(MAKE) migrate
