@@ -17,3 +17,7 @@ async def get_db():
             yield session
         finally:
             await session.close()
+
+
+# Import all models so Alembic can discover them
+from src.models import User, APIVariant, Subscription, UsageRecord
